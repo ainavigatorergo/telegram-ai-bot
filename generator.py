@@ -1,5 +1,6 @@
 import json
 import time
+import requests
 from openai import OpenAI
 from config import PROVOD_API_KEY, MODEL_NAME, TOPICS_FILE, HISTORY_FILE
 
@@ -103,19 +104,22 @@ def generate_post(topic=None, retries=3):
 
 def generate_image(prompt, retries=3):
     """
-    Генерирует изображение с автоматическим перебором моделей.
-    При ошибке 503 (временная недоступность модели) — короткая пауза и повтор.
-    При других ошибках — сразу переход к следующей модели.
+    Генерирует изображение и пытается скачать его в байтах.
+    Возвращает:
+      {"type": "bytes", "data": <bytes>}   — если удалось скачать
+      {"type": "url", "data": <str>}       — если скачать не удалось
+      None                                 — если не удалось сгенерировать
     """
     models_to_try = [
-        "google/gemini-3.1-flash-image",   # Основная: стабильная и быстрая
-        "google/nano-banana-pro",           # Резервная: качественная
-        "openai/gpt-image-2"                # Дополнительная: альтернатива
+        "google/gemini-3.1-flash-image",
+        "google/nano-banana-pro",
+        "openai/gpt-image-2"
     ]
 
     for model_name in models_to_try:
         for attempt in range(retries):
             try:
+                print(f"[IMAGE] Пробую модель: {model_name} (попытка {attempt + 1})")
                 response = client.images.generate(
                     model=model_name,
                     prompt=prompt,
@@ -124,21 +128,33 @@ def generate_image(prompt, retries=3):
                     n=1
                 )
                 if response.data and len(response.data) > 0:
-                    print(f"✅ Картинка сгенерирована через {model_name}")
-                    return response.data[0].url
+                    url = response.data[0].url
+                    print(f"[IMAGE] ✅ URL получен: {url[:80]}...")
+
+                    # Пробуем скачать картинку
+                    try:
+                        img_response = requests.get(url, timeout=20)
+                        if img_response.status_code == 200:
+                            size = len(img_response.content)
+                            print(f"[IMAGE] ✅ Скачано, размер: {size} байт")
+                            return {"type": "bytes", "data": img_response.content}
+                        else:
+                            print(f"[IMAGE] ⚠️ Не скачалось, статус: {img_response.status_code}")
+                            return {"type": "url", "data": url}
+                    except Exception as e:
+                        print(f"[IMAGE] ⚠️ Ошибка скачивания: {e}")
+                        return {"type": "url", "data": url}
             except Exception as e:
                 error_str = str(e)
-                print(f"Ошибка генерации ({model_name}, попытка {attempt + 1}/{retries}): {error_str}")
+                print(f"[IMAGE] Ошибка ({model_name}, попытка {attempt + 1}): {error_str}")
 
-                # Ошибка 503 / временная недоступность — пауза и повтор
                 if "503" in error_str or "MODEL_CAPABILITY_METADATA_UNAVAILABLE" in error_str:
                     time.sleep(2 ** attempt)
                     continue
                 else:
-                    # Другие ошибки — не тратим попытки, сразу пробуем следующую модель
                     break
 
-    print("❌ Не удалось сгенерировать картинку ни через одну модель")
+    print("[IMAGE] ❌ Не удалось сгенерировать картинку")
     return None
 
 # ---------- Логика для картинок ----------
@@ -153,4 +169,4 @@ def should_add_image(post_text):
     return False
 
 def extract_image_prompt(post_text):
-    return post_text[:100] + " — визуализация для Telegram-канала"
+    return post_text[:150] + " — визуализация для Telegram-канала про AI"
