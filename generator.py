@@ -10,7 +10,14 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# ---------- Темы ----------
+# Список моделей: если одна не работает, пробуем следующую
+MODELS_TO_TRY = [
+    "google/gemini-2.0-flash-exp:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "mistralai/mistral-7b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "google/gemini-flash-1.5:free"
+]
 
 def load_used_topics():
     try:
@@ -29,8 +36,6 @@ def reset_topics():
     with open(TOPICS_FILE, "w") as f:
         json.dump([], f)
 
-# ---------- История ----------
-
 def save_post_history(post_text, message_id):
     try:
         with open(HISTORY_FILE, "r") as f:
@@ -48,11 +53,9 @@ def get_post_history():
     except FileNotFoundError:
         return []
 
-# ---------- Текст через OpenRouter с перебором моделей ----------
-
-def generate_post(topic=None, retries=3):
-    used_topics = load_used_topics()
-    topics_pool = [
+def generate_post(topic=None, retries=2):
+    used = load_used_topics()
+    pool = [
         "обзор новой нейросети для бизнеса",
         "лайфхак по автоматизации рутины в Telegram",
         "готовый промпт для ChatGPT для маркетологов",
@@ -63,101 +66,71 @@ def generate_post(topic=None, retries=3):
         "как составить идеальное коммерческое предложение с ИИ"
     ]
     if not topic:
-        for t in topics_pool:
-            if t not in used_topics:
+        for t in pool:
+            if t not in used:
                 topic = t
                 break
         else:
             reset_topics()
-            topic = topics_pool[0]
+            topic = pool[0]
 
-    system_prompt = (
+    system = (
         "Ты — автор Telegram-канала «AI-навигатор». "
-        "Твой стиль: экспертный, но дружелюбный. Ты даёшь готовые решения, "
-        "без воды, с конкретными примерами. Используй эмодзи. "
-        "Если пост содержит сравнение, инфографику или кейс — в конце добавь метку [IMAGE]."
+        "Стиль: экспертный, дружелюбный, без воды, с примерами. Используй эмодзи. "
+        "Если пост содержит сравнение, инфографику или кейс — добавь метку [IMAGE]."
     )
-    user_prompt = (
+    user = (
         f"Напиши пост на тему: {topic}. "
         "Структура: заголовок, основная часть, вывод, призыв подписаться. "
-        "Длина: 900–1200 знаков. Добавь хештег #обзор или #лайфхак. "
-        "ВАЖНО: текст должен быть завершённым, не обрывайся на полуслове."
+        "Длина: 900–1200 знаков. Хештег #обзор или #лайфхак. "
+        "ВАЖНО: текст завершённый, без обрывов."
     )
 
-    # Резервные модели — если одна не работает, пробуем следующую
-    models_to_try = [
-        "google/gemini-2.0-flash-exp:free",
-        "google/gemini-flash-1.5:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "mistralai/mistral-7b-instruct:free",
-        "qwen/qwen-2.5-72b-instruct:free"
-    ]
-
-    for model_name in models_to_try:
+    for model in MODELS_TO_TRY:
         for attempt in range(retries):
             try:
-                print(f"[TEXT] Пробую модель: {model_name} (попытка {attempt + 1})")
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
+                print(f"[TEXT] Модель: {model} (попытка {attempt+1})")
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": system},
+                              {"role": "user", "content": user}],
                     temperature=0.8,
                     max_tokens=2500,
                     timeout=60
                 )
-                post = response.choices[0].message.content
-                print(f"[TEXT] ✅ Модель {model_name} сработала")
+                post = resp.choices[0].message.content
+                print(f"[TEXT] ✅ Модель {model} сработала")
                 save_used_topic(topic)
                 return post
             except Exception as e:
-                error_str = str(e)
-                print(f"[TEXT] Ошибка ({model_name}, попытка {attempt + 1}): {error_str}")
-
-                # Если модель не найдена или заблокирована по региону — сразу следующая
-                if "not found" in error_str.lower() or "404" in error_str or "region" in error_str.lower():
+                err = str(e)
+                print(f"[TEXT] Ошибка ({model}): {err}")
+                # Если модель не найдена или регион запрещён — сразу к следующей
+                if "not found" in err.lower() or "404" in err or "region" in err.lower():
                     break
-
                 time.sleep(2 ** attempt)
-
-    return "⚠️ Не удалось сгенерировать пост. Попробуйте позже."
-
-# ---------- Картинка через Pollinations.ai ----------
+    return "⚠️ Не удалось сгенерировать пост."
 
 def generate_image(prompt, retries=2):
-    clean_prompt = prompt.replace('\n', ' ').replace('*', '').replace('#', '')[:200]
-    encoded_prompt = urllib.parse.quote(clean_prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&model=flux"
-
+    clean = prompt.replace('\n', ' ').replace('*', '').replace('#', '')[:200]
+    encoded = urllib.parse.quote(clean)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux"
     for attempt in range(retries):
         try:
-            print(f"[IMAGE] Pollinations запрос (попытка {attempt + 1})...")
-            resp = requests.get(url, timeout=60)
-            if resp.status_code == 200 and len(resp.content) > 1000:
-                print(f"[IMAGE] ✅ Готово, размер: {len(resp.content)} байт")
-                return resp.content
-            else:
-                print(f"[IMAGE] ⚠️ Статус: {resp.status_code}, размер: {len(resp.content)}")
-                time.sleep(3)
-        except Exception as e:
-            print(f"[IMAGE] Ошибка (попытка {attempt + 1}): {e}")
+            print(f"[IMAGE] Pollinations (попытка {attempt+1})")
+            r = requests.get(url, timeout=60)
+            if r.status_code == 200 and len(r.content) > 1000:
+                print(f"[IMAGE] ✅ Размер: {len(r.content)} байт")
+                return r.content
             time.sleep(3)
-
-    print("[IMAGE] ❌ Не удалось получить картинку")
+        except Exception as e:
+            print(f"[IMAGE] Ошибка: {e}")
+            time.sleep(3)
     return None
 
-# ---------- Логика определения картинки ----------
+def should_add_image(text):
+    return "[IMAGE]" in text or any(k in text.lower() for k in ["сравнение", "инфографика", "график", "диаграмма", "пример", "кейс"])
 
-def should_add_image(post_text):
-    if "[IMAGE]" in post_text:
-        return True
-    keywords = ["сравнение", "инфографика", "график", "диаграмма", "пример", "кейс"]
-    for kw in keywords:
-        if kw in post_text.lower():
-            return True
-    return False
-
-def extract_image_prompt(post_text):
-    first_line = post_text.split('\n')[0][:150]
-    return f"{first_line}, digital illustration, modern tech style"
+def extract_image_prompt(text):
+    first = text.split('\n')[0][:150]
+    return f"{first}, digital illustration, modern tech style"
