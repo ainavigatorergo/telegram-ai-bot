@@ -1,10 +1,18 @@
 import json
 import time
 import requests
+import urllib.parse
 from openai import OpenAI
-from config import PROVOD_API_KEY, MODEL_NAME, TOPICS_FILE, HISTORY_FILE
+from config import OPENROUTER_API_KEY, TOPICS_FILE, HISTORY_FILE
 
-client = OpenAI(api_key=PROVOD_API_KEY, base_url="https://api.provod.ai/v1")
+# OpenRouter — для текста
+client = OpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1"
+)
+
+# Бесплатная модель для текста
+TEXT_MODEL = "google/gemini-2.0-flash-exp:free"
 
 # ---------- Темы ----------
 
@@ -44,7 +52,7 @@ def get_post_history():
     except FileNotFoundError:
         return []
 
-# ---------- Текст ----------
+# ---------- Текст через OpenRouter ----------
 
 def generate_post(topic=None, retries=3):
     used_topics = load_used_topics()
@@ -83,14 +91,14 @@ def generate_post(topic=None, retries=3):
     for attempt in range(retries):
         try:
             response = client.chat.completions.create(
-                model=MODEL_NAME,
+                model=TEXT_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.8,
                 max_tokens=2500,
-                timeout=30
+                timeout=60
             )
             post = response.choices[0].message.content
             save_used_topic(topic)
@@ -100,59 +108,35 @@ def generate_post(topic=None, retries=3):
             time.sleep(2 ** attempt)
     return "⚠️ Не удалось сгенерировать пост. Попробуйте позже."
 
-# ---------- Картинка ----------
+# ---------- Картинка через Pollinations.ai (бесплатно, без ключа) ----------
 
-def generate_image(prompt, retries=3):
+def generate_image(prompt, retries=2):
     """
-    Возвращает словарь:
-      {"type": "bytes", "data": <bytes>} — если скачали
-      {"type": "url", "data": "<url>"}   — если скачать не удалось
-      None                                — если генерация провалилась
+    Генерирует картинку через Pollinations.ai.
+    Возвращает bytes или None.
     """
-    models_to_try = [
-        "google/gemini-3.1-flash-image",
-        "google/nano-banana-pro",
-        "openai/gpt-image-2"
-    ]
+    # Убираем спецсимволы из промпта
+    clean_prompt = prompt.replace('\n', ' ').replace('*', '').replace('#', '')[:200]
+    encoded_prompt = urllib.parse.quote(clean_prompt)
 
-    for model_name in models_to_try:
-        for attempt in range(retries):
-            try:
-                print(f"[IMAGE] Пробую модель: {model_name} (попытка {attempt + 1})")
-                response = client.images.generate(
-                    model=model_name,
-                    prompt=prompt,
-                    size="1024x1024",
-                    quality="standard",
-                    n=1
-                )
-                if response.data and len(response.data) > 0:
-                    url = response.data[0].url
-                    print(f"[IMAGE] ✅ URL получен: {url[:80]}...")
+    # URL для генерации (прямая ссылка на картинку)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&model=flux"
 
-                    try:
-                        img_response = requests.get(url, timeout=20)
-                        if img_response.status_code == 200:
-                            size = len(img_response.content)
-                            print(f"[IMAGE] ✅ Скачано, размер: {size} байт")
-                            return {"type": "bytes", "data": img_response.content}
-                        else:
-                            print(f"[IMAGE] ⚠️ Не скачалось, статус: {img_response.status_code}")
-                            return {"type": "url", "data": url}
-                    except Exception as e:
-                        print(f"[IMAGE] ⚠️ Ошибка скачивания: {e}")
-                        return {"type": "url", "data": url}
-            except Exception as e:
-                error_str = str(e)
-                print(f"[IMAGE] Ошибка ({model_name}, попытка {attempt + 1}): {error_str}")
+    for attempt in range(retries):
+        try:
+            print(f"[IMAGE] Pollinations запрос (попытка {attempt + 1})...")
+            resp = requests.get(url, timeout=60)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                print(f"[IMAGE] ✅ Готово, размер: {len(resp.content)} байт")
+                return resp.content
+            else:
+                print(f"[IMAGE] ⚠️ Статус: {resp.status_code}, размер: {len(resp.content)}")
+                time.sleep(3)
+        except Exception as e:
+            print(f"[IMAGE] Ошибка (попытка {attempt + 1}): {e}")
+            time.sleep(3)
 
-                if "503" in error_str or "MODEL_CAPABILITY_METADATA_UNAVAILABLE" in error_str:
-                    time.sleep(2 ** attempt)
-                    continue
-                else:
-                    break
-
-    print("[IMAGE] ❌ Не удалось сгенерировать картинку")
+    print("[IMAGE] ❌ Не удалось получить картинку")
     return None
 
 # ---------- Логика ----------
@@ -167,4 +151,6 @@ def should_add_image(post_text):
     return False
 
 def extract_image_prompt(post_text):
-    return post_text[:150] + " — визуализация для Telegram-канала про AI"
+    # Берём первую строку (заголовок) как основу для картинки
+    first_line = post_text.split('\n')[0][:150]
+    return f"{first_line}, digital illustration, modern tech style"
