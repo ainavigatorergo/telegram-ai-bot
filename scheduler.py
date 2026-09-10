@@ -6,67 +6,37 @@ from generator import (
     generate_post, save_post_history,
     should_add_image, generate_image, extract_image_prompt
 )
-from config import CHANNEL_ID, POST_TIMES, STATS_FILE
-
-try:
-    from viral_engine import ab_test_post
-    from interactive_engine import add_interactive
-    from audience_analyzer import get_audience_style
-    MODULES_LOADED = True
-except ImportError:
-    MODULES_LOADED = False
-    print("Внимание: некоторые модули не загружены. Работаем в базовом режиме.")
+from config import CHANNEL_ID, POST_TIMES
 
 scheduled_tasks = []
 
 async def publish_post(bot, topic=None):
-    """Публикует пост с картинкой (если нужна)"""
     post = generate_post(topic)
     clean_post = post.replace("[IMAGE]", "").strip()
 
     try:
         if should_add_image(post):
-            image_result = generate_image(extract_image_prompt(clean_post))
-            if image_result:
+            img_bytes = generate_image(extract_image_prompt(clean_post))
+            if img_bytes:
+                photo = BufferedInputFile(img_bytes, filename="image.jpg")
                 try:
-                    if image_result["type"] == "bytes":
-                        photo = BufferedInputFile(image_result["data"], filename="image.jpg")
-                        if len(clean_post) <= 1024:
-                            msg = await bot.send_photo(
-                                chat_id=CHANNEL_ID, photo=photo, caption=clean_post
-                            )
-                            save_post_history(clean_post, msg.message_id)
-                            print(f"[{datetime.now()}] Пост с картинкой (bytes) опубликован")
-                            return
-                        else:
-                            await bot.send_photo(chat_id=CHANNEL_ID, photo=photo)
-                            text_msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
-                            save_post_history(clean_post, text_msg.message_id)
-                            print(f"[{datetime.now()}] Фото + текст (bytes) опубликованы")
-                            return
+                    if len(clean_post) <= 1024:
+                        msg = await bot.send_photo(chat_id=CHANNEL_ID, photo=photo, caption=clean_post)
+                        save_post_history(clean_post, msg.message_id)
+                        print(f"[{datetime.now()}] Пост с картинкой опубликован")
+                        return
                     else:
-                        url = image_result["data"]
-                        if len(clean_post) <= 1024:
-                            msg = await bot.send_photo(
-                                chat_id=CHANNEL_ID, photo=url, caption=clean_post
-                            )
-                            save_post_history(clean_post, msg.message_id)
-                            print(f"[{datetime.now()}] Пост с картинкой (url) опубликован")
-                            return
-                        else:
-                            await bot.send_photo(chat_id=CHANNEL_ID, photo=url)
-                            text_msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
-                            save_post_history(clean_post, text_msg.message_id)
-                            print(f"[{datetime.now()}] Фото + текст (url) опубликованы")
-                            return
+                        await bot.send_photo(chat_id=CHANNEL_ID, photo=photo)
+                        text_msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
+                        save_post_history(clean_post, text_msg.message_id)
+                        print(f"[{datetime.now()}] Фото + текст опубликованы")
+                        return
                 except Exception as e:
-                    print(f"⚠️ Не удалось отправить фото: {e}")
+                    print(f"[SCHED] Ошибка отправки фото: {e}")
 
-        # Текстовый пост
         msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
         save_post_history(clean_post, msg.message_id)
-        print(f"[{datetime.now()}] Текстовый пост опубликован (ID: {msg.message_id})")
-
+        print(f"[{datetime.now()}] Текстовый пост опубликован")
     except Exception as e:
         print(f"Ошибка публикации: {e}")
 
