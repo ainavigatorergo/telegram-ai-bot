@@ -17,7 +17,7 @@ except ImportError:
 scheduled_tasks = []
 
 async def publish_post(bot, topic=None):
-    """Публикует пост с картинкой при необходимости"""
+    """Публикует пост с картинкой (если нужна)"""
     post = generate_post(topic)
     clean_post = post.replace("[IMAGE]", "").strip()
 
@@ -26,15 +26,29 @@ async def publish_post(bot, topic=None):
         if should_add_image(post):
             image_url = generate_image(extract_image_prompt(clean_post))
             if image_url:
-                msg = await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=clean_post)
-                save_post_history(clean_post, msg.message_id)
-                print(f"[{datetime.now()}] Пост с картинкой опубликован (ID: {msg.message_id})")
-                return
+                # Случай 1: текст помещается в caption (≤1024 символов)
+                if len(clean_post) <= 1024:
+                    try:
+                        msg = await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=clean_post)
+                        save_post_history(clean_post, msg.message_id)
+                        print(f"[{datetime.now()}] Пост с картинкой опубликован (ID: {msg.message_id})")
+                        return
+                    except Exception as e:
+                        print(f"Ошибка send_photo с caption: {e}")
+                # Случай 2: текст длиннее — отправляем фото и текст отдельно
+                try:
+                    photo_msg = await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url)
+                    text_msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
+                    save_post_history(clean_post, text_msg.message_id)
+                    print(f"[{datetime.now()}] Фото + текст опубликованы отдельно")
+                    return
+                except Exception as e:
+                    print(f"Ошибка send_photo отдельно: {e}")
 
-        # Если картинка не нужна — обычный пост
+        # Если картинка не нужна — обычный текст
         msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
         save_post_history(clean_post, msg.message_id)
-        print(f"[{datetime.now()}] Пост опубликован (ID: {msg.message_id})")
+        print(f"[{datetime.now()}] Текстовый пост опубликован (ID: {msg.message_id})")
 
     except Exception as e:
         print(f"Ошибка публикации: {e}")
@@ -96,7 +110,7 @@ async def schedule_posts(bot):
                     else:
                         topic = "кейс или разбор тренда"
                     await publish_post(bot, topic)
-                    await asyncio.sleep(60)  # чтобы не сработало повторно
+                    await asyncio.sleep(60)
 
             # Ежедневный анализ в 2:00
             if now.hour == 2 and now.minute == 0:
