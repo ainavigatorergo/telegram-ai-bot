@@ -10,8 +10,6 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-TEXT_MODEL = "google/gemini-2.0-flash-exp:free"
-
 # ---------- Темы ----------
 
 def load_used_topics():
@@ -50,7 +48,7 @@ def get_post_history():
     except FileNotFoundError:
         return []
 
-# ---------- Текст через OpenRouter ----------
+# ---------- Текст через OpenRouter с перебором моделей ----------
 
 def generate_post(topic=None, retries=3):
     used_topics = load_used_topics()
@@ -86,24 +84,43 @@ def generate_post(topic=None, retries=3):
         "ВАЖНО: текст должен быть завершённым, не обрывайся на полуслове."
     )
 
-    for attempt in range(retries):
-        try:
-            response = client.chat.completions.create(
-                model=TEXT_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.8,
-                max_tokens=2500,
-                timeout=60
-            )
-            post = response.choices[0].message.content
-            save_used_topic(topic)
-            return post
-        except Exception as e:
-            print(f"[TEXT] Ошибка (попытка {attempt + 1}/{retries}): {e}")
-            time.sleep(2 ** attempt)
+    # Резервные модели — если одна не работает, пробуем следующую
+    models_to_try = [
+        "google/gemini-2.0-flash-exp:free",
+        "google/gemini-flash-1.5:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "mistralai/mistral-7b-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free"
+    ]
+
+    for model_name in models_to_try:
+        for attempt in range(retries):
+            try:
+                print(f"[TEXT] Пробую модель: {model_name} (попытка {attempt + 1})")
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.8,
+                    max_tokens=2500,
+                    timeout=60
+                )
+                post = response.choices[0].message.content
+                print(f"[TEXT] ✅ Модель {model_name} сработала")
+                save_used_topic(topic)
+                return post
+            except Exception as e:
+                error_str = str(e)
+                print(f"[TEXT] Ошибка ({model_name}, попытка {attempt + 1}): {error_str}")
+
+                # Если модель не найдена или заблокирована по региону — сразу следующая
+                if "not found" in error_str.lower() or "404" in error_str or "region" in error_str.lower():
+                    break
+
+                time.sleep(2 ** attempt)
+
     return "⚠️ Не удалось сгенерировать пост. Попробуйте позже."
 
 # ---------- Картинка через Pollinations.ai ----------
@@ -130,7 +147,7 @@ def generate_image(prompt, retries=2):
     print("[IMAGE] ❌ Не удалось получить картинку")
     return None
 
-# ---------- Логика ----------
+# ---------- Логика определения картинки ----------
 
 def should_add_image(post_text):
     if "[IMAGE]" in post_text:
