@@ -5,13 +5,11 @@ import urllib.parse
 from openai import OpenAI
 from config import OPENROUTER_API_KEY, TOPICS_FILE, HISTORY_FILE
 
-# OpenRouter — для текста
 client = OpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
-# Бесплатная модель для текста
 TEXT_MODEL = "google/gemini-2.0-flash-exp:free"
 
 # ---------- Темы ----------
@@ -108,18 +106,11 @@ def generate_post(topic=None, retries=3):
             time.sleep(2 ** attempt)
     return "⚠️ Не удалось сгенерировать пост. Попробуйте позже."
 
-# ---------- Картинка через Pollinations.ai (бесплатно, без ключа) ----------
+# ---------- Картинка через Pollinations.ai ----------
 
 def generate_image(prompt, retries=2):
-    """
-    Генерирует картинку через Pollinations.ai.
-    Возвращает bytes или None.
-    """
-    # Убираем спецсимволы из промпта
     clean_prompt = prompt.replace('\n', ' ').replace('*', '').replace('#', '')[:200]
     encoded_prompt = urllib.parse.quote(clean_prompt)
-
-    # URL для генерации (прямая ссылка на картинку)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&model=flux"
 
     for attempt in range(retries):
@@ -151,6 +142,5 @@ def should_add_image(post_text):
     return False
 
 def extract_image_prompt(post_text):
-    # Берём первую строку (заголовок) как основу для картинки
     first_line = post_text.split('\n')[0][:150]
     return f"{first_line}, digital illustration, modern tech style"
