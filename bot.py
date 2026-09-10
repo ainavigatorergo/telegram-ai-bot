@@ -11,6 +11,8 @@ from generator import (
 )
 from config import BOT_TOKEN, CHANNEL_ID, PORT
 
+# ---------- Flask для Render ----------
+
 app = Flask(__name__)
 
 @app.route('/')
@@ -20,8 +22,12 @@ def index():
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
 
+# ---------- Инициализация бота и диспетчера ----------
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# ---------- Обработка комментариев в канале ----------
 
 @dp.channel_post()
 async def on_channel_post(message: types.Message):
@@ -37,6 +43,8 @@ async def on_channel_post(message: types.Message):
                 await message.reply(reply)
         except Exception as e:
             print(f"Ошибка ответа на комментарий: {e}")
+
+# ---------- Команды ----------
 
 @dp.message(Command("start"))
 async def start_cmd(message: Message):
@@ -119,6 +127,8 @@ async def stats_cmd(message: Message):
     for i, item in enumerate(history[-5:], 1):
         stats_text += f"{i}. {item['text'][:60]}...\n"
     await message.answer(stats_text)
+
+# ---------- Запуск ----------
 
 async def main():
     await schedule_posts(bot)
