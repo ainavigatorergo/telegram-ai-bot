@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
 from scheduler import schedule_posts, publish_post
-from generator import generate_post, generate_image, get_post_history
+from generator import generate_post, generate_image, get_post_history, should_add_image, extract_image_prompt
 from config import BOT_TOKEN, CHANNEL_ID, PORT
 
 app = Flask(__name__)
@@ -44,7 +44,7 @@ async def start_cmd(message: Message):
     await message.answer(
         "🤖 Я AI-администратор канала @ainavigatorErgo\n\n"
         "Доступные команды:\n"
-        "/test_post – отправить тестовый пост\n"
+        "/test_post – сгенерировать и отправить пост\n"
         "/post <текст> – отправить свой пост\n"
         "/image <промпт> – сгенерировать картинку\n"
         "/stats – статистика последних постов\n"
@@ -58,8 +58,22 @@ async def help_cmd(message: Message):
 
 @dp.message(Command("test_post"))
 async def test_post_cmd(message: Message):
+    await message.answer("⏳ Генерирую пост...")
     post = generate_post()
-    await bot.send_message(chat_id=CHANNEL_ID, text=post)
+    # Убираем метку [IMAGE] из текста
+    clean_post = post.replace("[IMAGE]", "").strip()
+
+    # Проверяем, нужна ли картинка
+    if should_add_image(post):
+        await message.answer("🎨 Генерирую картинку...")
+        prompt = extract_image_prompt(clean_post)
+        image_url = generate_image(prompt)
+        if image_url:
+            await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=clean_post)
+            await message.answer("✅ Пост с картинкой отправлен в канал!")
+            return
+
+    await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
     await message.answer("✅ Пост отправлен в канал!")
 
 @dp.message(Command("post"))
@@ -77,9 +91,10 @@ async def image_cmd(message: Message):
     if not prompt:
         await message.answer("Напиши промпт после /image")
         return
+    await message.answer("🎨 Генерирую картинку...")
     url = generate_image(prompt)
     if url:
-        await message.answer(f"🖼️ Картинка: {url}")
+        await message.answer_photo(photo=url, caption="Готово!")
     else:
         await message.answer("Не удалось сгенерировать.")
 
@@ -96,6 +111,7 @@ async def stats_cmd(message: Message):
 
 @dp.message(Command("analyze"))
 async def analyze_cmd(message: Message):
+    await message.answer("🔍 Анализирую тренды...")
     try:
         from analytics import generate_topics_from_insights
         topics = generate_topics_from_insights()
