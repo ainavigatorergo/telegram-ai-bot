@@ -60,21 +60,34 @@ async def help_cmd(message: Message):
 async def test_post_cmd(message: Message):
     await message.answer("⏳ Генерирую пост...")
     post = generate_post()
-    # Убираем метку [IMAGE] из текста
     clean_post = post.replace("[IMAGE]", "").strip()
 
-    # Проверяем, нужна ли картинка
     if should_add_image(post):
         await message.answer("🎨 Генерирую картинку...")
         prompt = extract_image_prompt(clean_post)
         image_url = generate_image(prompt)
         if image_url:
-            await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=clean_post)
-            await message.answer("✅ Пост с картинкой отправлен в канал!")
-            return
+            # Лимит Telegram: 1024 символа для caption
+            if len(clean_post) <= 1024:
+                try:
+                    await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=clean_post)
+                    await message.answer("✅ Пост с картинкой отправлен в канал!")
+                    return
+                except Exception as e:
+                    print(f"Ошибка send_photo (caption): {e}")
+                    await message.answer(f"⚠️ Фото с подписью не ушло: {e}")
+            # Если текст длиннее 1024 — отправляем фото и текст отдельно
+            try:
+                await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url)
+                await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
+                await message.answer("✅ Фото и текст отправлены отдельными сообщениями!")
+                return
+            except Exception as e:
+                print(f"Ошибка send_photo (отдельно): {e}")
+                await message.answer(f"⚠️ Фото не ушло: {e}")
 
     await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
-    await message.answer("✅ Пост отправлен в канал!")
+    await message.answer("✅ Текстовый пост отправлен в канал!")
 
 @dp.message(Command("post"))
 async def custom_post_cmd(message: Message):
@@ -94,9 +107,12 @@ async def image_cmd(message: Message):
     await message.answer("🎨 Генерирую картинку...")
     url = generate_image(prompt)
     if url:
-        await message.answer_photo(photo=url, caption="Готово!")
+        try:
+            await message.answer_photo(photo=url, caption="Готово!")
+        except Exception as e:
+            await message.answer(f"Ссылка на картинку: {url}\n(Не удалось отобразить: {e})")
     else:
-        await message.answer("Не удалось сгенерировать.")
+        await message.answer("Не удалось сгенерировать картинку. Проверь баланс provod.ai.")
 
 @dp.message(Command("stats"))
 async def stats_cmd(message: Message):
