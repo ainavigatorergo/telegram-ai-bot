@@ -1,7 +1,7 @@
 import asyncio
 import json
 from datetime import datetime
-from generator import generate_post, save_post_history
+from generator import generate_post, save_post_history, should_add_image, generate_image, extract_image_prompt
 from config import CHANNEL_ID, POST_TIMES, STATS_FILE
 
 # Импорты новых модулей (будут добавлены позже)
@@ -9,7 +9,6 @@ try:
     from viral_engine import ab_test_post
     from interactive_engine import add_interactive
     from audience_analyzer import get_audience_style
-    from trend_predictor import get_trending_topics
     MODULES_LOADED = True
 except ImportError:
     MODULES_LOADED = False
@@ -18,29 +17,25 @@ except ImportError:
 scheduled_tasks = []
 
 async def publish_post(bot, topic=None):
-    """Публикует пост с учётом всех модулей"""
-    # 1. Генерация поста
+    """Публикует пост с картинкой при необходимости"""
     post = generate_post(topic)
-    
-    # 2. Если доступны модули, применяем улучшения
-    if MODULES_LOADED:
-        # Адаптация под аудиторию
-        style = get_audience_style()
-        if style:
-            post = f"[Стиль: {style}]\n\n{post}"
-        
-        # Добавление интерактива (опрос, викторина)
-        post = add_interactive(post)
-        
-        # A/B тест заголовков (публикуем два варианта с интервалом)
-        await ab_test_post(bot, CHANNEL_ID, post)
-        return
-    
-    # Базовый режим: просто отправляем пост
+    clean_post = post.replace("[IMAGE]", "").strip()
+
     try:
-        msg = await bot.send_message(chat_id=CHANNEL_ID, text=post)
-        save_post_history(post, msg.message_id)
+        # Проверяем, нужна ли картинка
+        if should_add_image(post):
+            image_url = generate_image(extract_image_prompt(clean_post))
+            if image_url:
+                msg = await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=clean_post)
+                save_post_history(clean_post, msg.message_id)
+                print(f"[{datetime.now()}] Пост с картинкой опубликован (ID: {msg.message_id})")
+                return
+
+        # Если картинка не нужна — обычный пост
+        msg = await bot.send_message(chat_id=CHANNEL_ID, text=clean_post)
+        save_post_history(clean_post, msg.message_id)
         print(f"[{datetime.now()}] Пост опубликован (ID: {msg.message_id})")
+
     except Exception as e:
         print(f"Ошибка публикации: {e}")
 
@@ -78,13 +73,13 @@ async def monitor_loop():
 async def schedule_posts(bot):
     """Основной цикл планировщика"""
     times = [t.strip() for t in POST_TIMES]
-    
+
     async def scheduler_loop():
         # Первоначальный анализ при старте
         await run_daily_analysis()
         # Запускаем фоновый мониторинг
         asyncio.create_task(monitor_loop())
-        
+
         while True:
             now = datetime.now()
             for time_str in times:
@@ -102,14 +97,14 @@ async def schedule_posts(bot):
                         topic = "кейс или разбор тренда"
                     await publish_post(bot, topic)
                     await asyncio.sleep(60)  # чтобы не сработало повторно
-            
+
             # Ежедневный анализ в 2:00
             if now.hour == 2 and now.minute == 0:
                 await run_daily_analysis()
                 await asyncio.sleep(60)
-            
+
             await asyncio.sleep(30)
-    
+
     task = asyncio.create_task(scheduler_loop())
     scheduled_tasks.append(task)
     print(f"Расписание установлено: {', '.join(times)} МСК")
