@@ -6,7 +6,7 @@ from config import PROVOD_API_KEY, MODEL_NAME, TOPICS_FILE, HISTORY_FILE
 
 client = OpenAI(api_key=PROVOD_API_KEY, base_url="https://api.provod.ai/v1")
 
-# ---------- Работа с темами ----------
+# ---------- Темы ----------
 
 def load_used_topics():
     try:
@@ -25,7 +25,7 @@ def reset_topics():
     with open(TOPICS_FILE, "w") as f:
         json.dump([], f)
 
-# ---------- История постов ----------
+# ---------- История ----------
 
 def save_post_history(post_text, message_id):
     try:
@@ -44,7 +44,7 @@ def get_post_history():
     except FileNotFoundError:
         return []
 
-# ---------- Генерация текста поста ----------
+# ---------- Текст ----------
 
 def generate_post(topic=None, retries=3):
     used_topics = load_used_topics()
@@ -96,19 +96,18 @@ def generate_post(topic=None, retries=3):
             save_used_topic(topic)
             return post
         except Exception as e:
-            print(f"Ошибка генерации текста (попытка {attempt + 1}/{retries}): {e}")
+            print(f"[TEXT] Ошибка (попытка {attempt + 1}/{retries}): {e}")
             time.sleep(2 ** attempt)
     return "⚠️ Не удалось сгенерировать пост. Попробуйте позже."
 
-# ---------- Генерация картинки ----------
+# ---------- Картинка ----------
 
 def generate_image(prompt, retries=3):
     """
-    Генерирует изображение и пытается скачать его в байтах.
-    Возвращает:
-      {"type": "bytes", "data": <bytes>}   — если удалось скачать
-      {"type": "url", "data": <str>}       — если скачать не удалось
-      None                                 — если не удалось сгенерировать
+    Возвращает словарь:
+      {"type": "bytes", "data": <bytes>} — если скачали
+      {"type": "url", "data": "<url>"}   — если скачать не удалось
+      None                                — если генерация провалилась
     """
     models_to_try = [
         "google/gemini-3.1-flash-image",
@@ -131,7 +130,6 @@ def generate_image(prompt, retries=3):
                     url = response.data[0].url
                     print(f"[IMAGE] ✅ URL получен: {url[:80]}...")
 
-                    # Пробуем скачать картинку
                     try:
                         img_response = requests.get(url, timeout=20)
                         if img_response.status_code == 200:
@@ -157,7 +155,7 @@ def generate_image(prompt, retries=3):
     print("[IMAGE] ❌ Не удалось сгенерировать картинку")
     return None
 
-# ---------- Логика для картинок ----------
+# ---------- Логика ----------
 
 def should_add_image(post_text):
     if "[IMAGE]" in post_text:
